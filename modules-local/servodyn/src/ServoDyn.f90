@@ -140,6 +140,11 @@ MODULE ServoDyn
    INTEGER(IntKi), PARAMETER :: ControlMode_DLL       = 5          !< The (ServoDyn-universal) control code for obtaining the control values from a Bladed-Style dynamic-link library
    
    
+      ! currently hardcoded model parameters
+   REAL(ReKi), PARAMETER :: OmLossTab(20) = (/ 720.9, 722.4, 734.4, 749.4, 759.8, 770.3, 780.8, 791.3, 809.3, 876.7, 944.2, 1011.6, 1079.1, 1091.1, 1094.1, 1109.0, 1124.0, 1169.0, 1228.9, 1258.9 /)
+   REAL(ReKi), PARAMETER :: ELossTab(20) = (/ 40.0, 40.6, 38.3, 54.6, 54.9, 56.4, 59.2, 63.6, 68.8, 74.8, 82.6, 91.2, 111.9, 136.2, 155.9, 166.5, 178.1, 201.5, 223.4, 235.7 /)
+   REAL(ReKi), PARAMETER :: MLossTab(20) = (/ 16.8, 16.9, 17.4, 18.7, 20.2, 22.0, 24.0, 26.3, 29.3, 35.3, 42.0, 49.4, 57.5, 62.6, 65.3, 66.9, 69.1, 75.4, 82.3, 85.9 /)
+   
       ! ..... Public Subroutines ...................................................................................................
 
    PUBLIC :: SrvD_Init                           ! Initialization routine
@@ -3614,6 +3619,8 @@ SUBROUTINE CalculateTorque( t, u, p, m, GenTrq, ElecPwr, ErrStat, ErrMsg )
       
    REAL(ReKi)                                     :: S2          ! SlipRat**2
    
+   INTEGER(IntKi)                                 :: ILo ! interpolation index
+   
    character(*), parameter                        :: RoutineName = 'CalculateTorque'
 
       ! Initialize variables
@@ -3720,8 +3727,24 @@ SUBROUTINE CalculateTorque( t, u, p, m, GenTrq, ElecPwr, ErrStat, ErrMsg )
             
             IF ( m%dll_data%GenState /= 0_IntKi ) THEN ! generator is on    
                
-               GenTrq = m%dll_data%GenTrq
+                IF ( ABS(u%HSS_Spd) < 0.00001 ) THEN
+                    GenTrq = 0.0
+                ELSE
+                   ILo = 1 
+                   GenTrq = m%dll_data%GenTrq + InterpBinReal(u%HSS_Spd*RPS2RPM, OmLossTab, ELossTab,  ILo, 20)*1000.0 / u%HSS_Spd
+                   !print*,u%HSS_Spd
+                    !print*,m%dll_data%GenTrq
+                    !print*,GenTrq
+                END IF
+                
+                ! Flex5 PT1 filter is missing here
                ElecPwr = CalculateElecPwr( GenTrq, u, p )
+                
+               IF ( ABS(u%HSS_Spd) > 0.00001 ) THEN
+                    ! add mechanical losses
+                    ILo = 1
+                    GenTrq = GenTrq + InterpBinReal(u%HSS_Spd*RPS2RPM, OmLossTab, MLossTab,  ILo, 20)*1000.0 / u%HSS_Spd 
+               END IF
                         
             ELSE ! generator is off
                
@@ -3754,17 +3777,21 @@ FUNCTION CalculateElecPwr( GenTrq, u, p )
 REAL(ReKi),                INTENT(IN)  :: GenTrq               !< generator torque computed at t 
 TYPE(SrvD_InputType),      INTENT(IN)  :: u                    !< Inputs at t
 TYPE(SrvD_ParameterType),  INTENT(IN)  :: p                    !< Parameters
-   
+
+INTEGER(IntKi)                                 :: ILo ! interpolation index
+
 REAL(ReKi)                             :: CalculateElecPwr     !< The result of this function
-   
+
+    ILo = 1 
+    CalculateElecPwr = GenTrq * u%HSS_Spd - InterpBinReal(u%HSS_Spd*RPS2RPM, OmLossTab, ELossTab,  ILo, 20)*1000.0 
       !! The generator efficiency is either additive for motoring,
       !!   or subtractive for generating power.
 
-   IF ( GenTrq >= 0.0_ReKi )  THEN
-      CalculateElecPwr = GenTrq * u%HSS_Spd * p%GenEff
-   ELSE
-      CalculateElecPwr = GenTrq * u%HSS_Spd / p%GenEff
-   ENDIF      
+   !IF ( GenTrq >= 0.0_ReKi )  THEN
+   !   CalculateElecPwr = GenTrq * u%HSS_Spd * p%GenEff
+   !ELSE
+   !   CalculateElecPwr = GenTrq * u%HSS_Spd / p%GenEff
+   !ENDIF      
    
 END FUNCTION CalculateElecPwr
 !----------------------------------------------------------------------------------------------------------------------------------
