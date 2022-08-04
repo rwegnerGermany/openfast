@@ -89,10 +89,12 @@ MODULE BladedInterface
       ! Some constants for the Interface:
    
    INTEGER(IntKi), PARAMETER    :: R_v36 = 85         !< Start of below-rated torque-speed look-up table (record no.) for Bladed version 3.6
-   INTEGER(IntKi), PARAMETER    :: R_v4  = 145        !< Start of below-rated torque-speed look-up table (record no.) for Bladed version 3.8 and later
+   INTEGER(IntKi), PARAMETER    :: R_v4  = 165        !< Start of below-rated torque-speed look-up table (record no.) for Bladed version 3.8 and later
 
-   INTEGER(IntKi), PARAMETER    :: R = R_v4           !< start of the generator speed look-up table  
-            
+   INTEGER(IntKi), PARAMETER    :: R = R_v4           !< start of the generator speed look-up table
+   
+   INTEGER(IntKi), PARAMETER    :: MaxNumLogging = 70 !< maximum number of variables which can be returned for logging. 70 is the Bladed value
+   INTEGER(IntKi), PARAMETER    :: MaxOutnameLength = 1024 !< maximum number of characters which can be returned in avcOUTNAME        
 
 CONTAINS
 !==================================================================================================================================
@@ -113,10 +115,10 @@ SUBROUTINE CallBladedDLL ( u, DLL, dll_data, p, ErrStat, ErrMsg )
    CHARACTER(*),              INTENT(  OUT)  :: ErrMsg         ! Error message if ErrStat /= ErrID_None
    
       ! Local Variables:
-
+   
    INTEGER(C_INT)                            :: aviFAIL                        ! A flag used to indicate the success of this DLL call set as follows: 0 if the DLL call was successful, >0 if the DLL call was successful but cMessage should be issued as a warning messsage, <0 if the DLL call was unsuccessful or for any other reason the simulation is to be stopped at this point with cMessage as the error message.
    CHARACTER(KIND=C_CHAR)                    :: accINFILE(LEN_TRIM(p%DLL_InFile)+1)  ! INFILE
-   CHARACTER(KIND=C_CHAR)                    :: avcOUTNAME(LEN_TRIM(p%RootName)+1)   ! OUTNAME (Simulation RootName)
+   CHARACTER(KIND=C_CHAR)                    :: avcOUTNAME(MaxOutnameLength)   ! OUTNAME (Simulation RootName)
    CHARACTER(KIND=C_CHAR)                    :: avcMSG(LEN(ErrMsg)+1)                ! MESSAGE (Message from DLL to simulation code [ErrMsg])   
    
       
@@ -144,7 +146,8 @@ SUBROUTINE CallBladedDLL ( u, DLL, dll_data, p, ErrStat, ErrMsg )
 #endif
 
 #else
-
+!    print *, 'waiting'
+!    read(*,*)
    IF ( ALLOCATED(dll_data%SCoutput) ) THEN
          ! Call the DLL (first associate the address from the procedure in the DLL with the subroutine):
       CALL C_F_PROCPOINTER( DLL%ProcAddr(1), DLL_SC_Subroutine) 
@@ -262,7 +265,7 @@ SUBROUTINE BladedInterface_Init(u,p,m,y,InputFileData, ErrStat, ErrMsg)
    IF ( ErrStat >= AbortErrLev ) RETURN
    
    
-   CALL AllocAry( m%dll_data%avrSwap,   R+(2*p%DLL_NumTrq)-1, 'avrSwap', ErrStat2, ErrMsg2 )
+   CALL AllocAry( m%dll_data%avrSwap,   R+(2*p%DLL_NumTrq)-1+MaxNumLogging, 'avrSwap', ErrStat2, ErrMsg2 )
       CALL CheckError(ErrStat2,ErrMsg2)
       IF ( ErrStat >= AbortErrLev ) RETURN
 
@@ -524,9 +527,9 @@ END IF
 ! Records 55-59 are outputs [see Retrieve_avrSWAP()]
    dll_data%avrSWAP(60) = u%LSSTipPxa                       !> * Record 60: Rotor azimuth angle (rad) [SrvD input]
    dll_data%avrSWAP(61) = p%NumBl                           !> * Record 61: Number of blades (-) [SrvD NumBl parameter]
-   dll_data%avrSWAP(62) = 0.0                               !> * Record 62: Maximum number of values which can be returned for logging (-) [currently set to 0]
-   dll_data%avrSWAP(63) = 0.0                               !> * Record 63: Record number for start of logging output (-) [currently set to 0]
-   dll_data%avrSWAP(64) = 0.0                               !> * Record 64: Maximum number of characters which can be returned in "OUTNAME" (-) [currently set to 0]
+   dll_data%avrSWAP(62) = REAL( MaxNumLogging )             !> * Record 62: Maximum number of values which can be returned for logging (-)
+   dll_data%avrSWAP(63) = REAL( R+(2*p%DLL_NumTrq) )        !> * Record 63: Record number for start of logging output (-)
+   dll_data%avrSWAP(64) = REAL( MaxOutnameLength )                            !> * Record 64: Maximum number of characters which can be returned in "OUTNAME" (-) [currently set to 0]
 ! Record 65 is output [see Retrieve_avrSWAP()]
 ! Records 66-68 are reserved
 
@@ -687,16 +690,16 @@ SUBROUTINE Retrieve_avrSWAP( p, dll_data, ErrStat, ErrMsg )
 !! Records 57-59 are reserved
 
 !> * Record 65: Number of variables returned for logging [anything other than 0 is an error]
-   IF ( NINT( dll_data%avrSWAP(65) ) /=  0 )  THEN
-      
-         ! Return variables for logging requested by DLL; abort program
-         
-      IF ( ErrStat /= ErrID_None ) ErrMsg = TRIM(ErrMsg)//NewLine
-      ErrMsg = TRIM(ErrMsg)//'Return variables unsupported in '//TRIM( GetNVD( BladedInterface_Ver ) )//&
-               '. Set avrSWAP(65) to 0 in '//TRIM(p%DLL_Trgt%FileName)//'.'
-      ErrStat = ErrID_Fatal
-
-   ENDIF
+   !IF ( NINT( dll_data%avrSWAP(65) ) /=  0 )  THEN
+   !   
+   !      ! Return variables for logging requested by DLL; abort program
+   !      
+   !   IF ( ErrStat /= ErrID_None ) ErrMsg = TRIM(ErrMsg)//NewLine
+   !   ErrMsg = TRIM(ErrMsg)//'Return variables unsupported in '//TRIM( GetNVD( BladedInterface_Ver ) )//&
+   !            '. Set avrSWAP(65) to 0 in '//TRIM(p%DLL_Trgt%FileName)//'.'
+   !   ErrStat = ErrID_Fatal
+   !
+   !ENDIF
 
 !> * Record 72, the generator start-up resistance, is ignored
 !> * Record 79, the request for loads, is ignored; instead, the blade, hub, and yaw bearing loads are always passed to the DLL as if Record 79 was set to 4
